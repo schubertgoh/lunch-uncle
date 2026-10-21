@@ -30,7 +30,7 @@
 <body>
   <header>
     <h1>Lunch Uncle</h1>
-    <p>Tell Uncle what you feel like eating. He is at CT Hub 2, Lavender.</p>
+    <p>Tell Uncle what you feel like eating. <span id="where">Finding where you are...</span></p>
   </header>
 
   <div id="chat"></div>
@@ -46,8 +46,28 @@
     const input = document.getElementById("input");
     const send = document.getElementById("send");
 
+    const where = document.getElementById("where");
+
     // Conversation so far, in the shape the /chat endpoint expects.
     const history = [];
+
+    // The user's position, if they allow it. Without it the server falls
+    // back to CT Hub 2.
+    let userLocation = null;
+    if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        ({ coords }) => {
+          userLocation = { latitude: coords.latitude, longitude: coords.longitude };
+          where.textContent = "Uncle is using your location.";
+        },
+        () => {
+          where.textContent = "Location off, so Uncle assumes CT Hub 2, Lavender.";
+        },
+        { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 },
+      );
+    } else {
+      where.textContent = "Uncle assumes you are at CT Hub 2, Lavender.";
+    }
 
     function addBubble(role, text) {
       const div = document.createElement("div");
@@ -72,7 +92,7 @@
         const res = await fetch("/chat", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ history, message }),
+          body: JSON.stringify({ history, message, location: userLocation }),
         });
         const data = await res.json();
         if (!res.ok || typeof data.reply !== "string") {

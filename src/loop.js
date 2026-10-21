@@ -1,5 +1,5 @@
 import { buildSystemPrompt } from "./prompt.js";
-import { toolDefinitions, executeTool } from "./tools.js";
+import { toolDefinitions, executeTool, CT_HUB_2 } from "./tools.js";
 
 // OpenCode Go, OpenAI-compatible chat completions endpoint.
 const LLM_BASE_URL = "https://opencode.ai/inference/go/openai/v1";
@@ -20,15 +20,20 @@ const FALLBACK_REPLY = "Just go Berseh Food Centre lah.";
  * Run the agentic loop for one user turn and return Uncle's reply.
  *
  * history is the prior conversation as OpenAI-style {role, content} messages.
+ * location is the browser's {latitude, longitude}, or anything else if the
+ * user did not share it, in which case Uncle assumes CT Hub 2.
  */
-export async function runLoop(history, message, env) {
+export async function runLoop(history, message, env, location) {
   // If the Places key is missing, Uncle cannot search, so give a safe answer.
   if (!env.GOOGLE_PLACES_API_KEY) {
     return FALLBACK_REPLY;
   }
 
+  const userLocation = parseLocation(location);
+  const origin = userLocation ?? CT_HUB_2;
+
   const messages = [
-    { role: "system", content: buildSystemPrompt() },
+    { role: "system", content: buildSystemPrompt(new Date(), userLocation) },
     ...cleanHistory(history),
     { role: "user", content: message },
   ];
@@ -49,7 +54,7 @@ export async function runLoop(history, message, env) {
     for (const call of toolCalls) {
       const args = parseArgs(call.function.arguments);
       console.log(`round ${round}: ${call.function.name}`, args);
-      const result = await executeTool(call.function.name, args, env);
+      const result = await executeTool(call.function.name, args, env, origin);
       messages.push({
         role: "tool",
         tool_call_id: call.id,
@@ -124,6 +129,22 @@ export function cleanHistory(history) {
     )
     .slice(-MAX_HISTORY_MESSAGES)
     .map(({ role, content }) => ({ role, content }));
+}
+
+/**
+ * Return {latitude, longitude} if the client sent a valid position, else null.
+ */
+export function parseLocation(location) {
+  const { latitude, longitude } = location ?? {};
+  if (
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude) ||
+    Math.abs(latitude) > 90 ||
+    Math.abs(longitude) > 180
+  ) {
+    return null;
+  }
+  return { latitude, longitude };
 }
 
 function parseArgs(raw) {

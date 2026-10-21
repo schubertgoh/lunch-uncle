@@ -6,12 +6,14 @@
  * The format functions are the ones covered by tests.
  */
 
-// CT Hub 2, 114 Lavender Street.
+// CT Hub 2, 114 Lavender Street. Used when the user does not share their
+// location.
 export const CT_HUB_2 = { latitude: 1.3115, longitude: 103.8615 };
 
 const SEARCH_RADIUS_METRES = 800;
 const MAX_PLACES = 10;
-const FORECAST_AREA = "Kallang";
+// Used only if the forecast payload has no area coordinates.
+const DEFAULT_FORECAST_AREA = "Kallang";
 
 // Places you can sit down or buy a meal at. Food courts and kopitiams are
 // typed food_court or coffee_shop, not restaurant, so list them explicitly.
@@ -39,7 +41,7 @@ export const toolDefinitions = [
     function: {
       name: "find_lunch_places",
       description:
-        "Search for places to eat near CT Hub 2. Returns name, rating, distance and whether it is open now.",
+        "Search for places to eat within walking distance of the user. Returns name, rating, distance from the user and whether it is open now.",
       parameters: {
         type: "object",
         properties: {
@@ -62,7 +64,7 @@ export const toolDefinitions = [
     function: {
       name: "get_rain_forecast",
       description:
-        "Get the two-hour weather forecast for the Kallang area, which covers CT Hub 2.",
+        "Get the two-hour weather forecast for the area the user is in.",
       parameters: { type: "object", properties: {} },
     },
   },
@@ -93,15 +95,15 @@ export const toolDefinitions = [
 /**
  * Run one tool call requested by the model and return the result as a string.
  */
-export async function executeTool(name, args, env) {
+export async function executeTool(name, args, env, origin = CT_HUB_2) {
   // A failed lookup goes back to the model as an error result, so one
   // flaky API does not sink the whole reply.
   try {
     switch (name) {
       case "find_lunch_places":
-        return JSON.stringify(await findLunchPlaces(args, env));
+        return JSON.stringify(await findLunchPlaces(args, env, origin));
       case "get_rain_forecast":
-        return JSON.stringify(await getRainForecast());
+        return JSON.stringify(await getRainForecast(origin));
       case "get_bus_arrivals":
         return JSON.stringify(await getBusArrivals(args));
       default:
@@ -117,8 +119,8 @@ export async function executeTool(name, args, env) {
 // find_lunch_places
 // ---------------------------------------------------------------------------
 
-async function findLunchPlaces({ query, open_now = false }, env) {
-  const centre = CT_HUB_2;
+async function findLunchPlaces({ query, open_now = false }, env, origin) {
+  const centre = origin;
 
   // locationBias only nudges results, so far-away matches still come back.
   // Text Search restricts by rectangle only, so use the box around the circle.
@@ -202,12 +204,32 @@ export function haversineMetres(a, b) {
 // get_rain_forecast
 // ---------------------------------------------------------------------------
 
-async function getRainForecast() {
+async function getRainForecast(origin) {
   const res = await fetch(FORECAST_URL);
   if (!res.ok) {
     return { error: `Forecast API returned ${res.status}` };
   }
-  return formatForecast(await res.json(), FORECAST_AREA);
+  const payload = await res.json();
+  const area =
+    nearestArea(payload?.data?.area_metadata, origin) ?? DEFAULT_FORECAST_AREA;
+  return formatForecast(payload, area);
+}
+
+/**
+ * Name of the forecast area whose label point is closest to origin.
+ */
+export function nearestArea(areaMetadata, origin) {
+  let best = null;
+  let bestDistance = Infinity;
+  for (const { name, label_location } of areaMetadata ?? []) {
+    if (!label_location) continue;
+    const distance = haversineMetres(origin, label_location);
+    if (distance < bestDistance) {
+      best = name;
+      bestDistance = distance;
+    }
+  }
+  return best;
 }
 
 /**

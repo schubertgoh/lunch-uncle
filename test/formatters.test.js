@@ -5,8 +5,9 @@ import {
   formatBusArrivals,
   formatPlaces,
   haversineMetres,
+  nearestArea,
 } from "../src/tools.js";
-import { cleanHistory } from "../src/loop.js";
+import { cleanHistory, parseLocation } from "../src/loop.js";
 import { buildSystemPrompt } from "../src/prompt.js";
 
 test("formatForecast picks the requested area", () => {
@@ -141,7 +142,39 @@ test("buildSystemPrompt states the time in Singapore, after the persona", () => 
   // 04:30 UTC is 12:30 pm in Singapore.
   const prompt = buildSystemPrompt(new Date("2026-10-21T04:30:00Z"));
   assert.ok(prompt.startsWith("You are Lunch Uncle"));
-  assert.match(prompt, /12:30\s*pm in Singapore\.$/i);
+  assert.match(prompt, /12:30\s*pm in Singapore\./i);
+  assert.match(prompt, /assume they are at CT Hub 2/);
+});
+
+test("buildSystemPrompt uses the shared location when there is one", () => {
+  const prompt = buildSystemPrompt(new Date(), {
+    latitude: 1.2834,
+    longitude: 103.8607,
+  });
+  assert.match(prompt, /shared their location \(1\.2834, 103\.8607\)/);
+  assert.doesNotMatch(prompt, /CT Hub 2/);
+});
+
+test("parseLocation accepts valid coordinates and rejects the rest", () => {
+  assert.deepEqual(parseLocation({ latitude: 1.3, longitude: 103.8, extra: 1 }), {
+    latitude: 1.3,
+    longitude: 103.8,
+  });
+  assert.equal(parseLocation(null), null);
+  assert.equal(parseLocation({ latitude: "1.3", longitude: 103.8 }), null);
+  assert.equal(parseLocation({ latitude: 91, longitude: 103.8 }), null);
+  assert.equal(parseLocation({ latitude: 1.3 }), null);
+});
+
+test("nearestArea picks the forecast area closest to the user", () => {
+  const areas = [
+    { name: "Bedok", label_location: { latitude: 1.321, longitude: 103.924 } },
+    { name: "Kallang", label_location: { latitude: 1.311, longitude: 103.866 } },
+    { name: "Jurong West", label_location: { latitude: 1.34, longitude: 103.705 } },
+  ];
+  assert.equal(nearestArea(areas, { latitude: 1.3115, longitude: 103.8615 }), "Kallang");
+  assert.equal(nearestArea(areas, { latitude: 1.33, longitude: 103.72 }), "Jurong West");
+  assert.equal(nearestArea(undefined, { latitude: 1.3, longitude: 103.8 }), null);
 });
 
 test("haversineMetres measures CT Hub 2 to Lavender MRT at under 600 m", () => {
