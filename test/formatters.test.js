@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   formatForecast,
   formatBusArrivals,
+  formatPlaces,
   haversineMetres,
 } from "../src/tools.js";
 
@@ -47,6 +48,33 @@ test("formatBusArrivals converts durations to whole minutes", () => {
       { service: "107M", next_min: 1, subsequent_min: null },
     ],
   });
+});
+
+test("formatPlaces drops far places and sorts nearest first", () => {
+  const ctHub2 = { latitude: 1.3115, longitude: 103.8615 };
+  const places = [
+    {
+      displayName: { text: "Lavender Food Square" },
+      rating: 4.0,
+      location: { latitude: 1.3073, longitude: 103.8631 },
+    },
+    {
+      displayName: { text: "Bedok Interchange Hawker Centre" },
+      rating: 4.1,
+      location: { latitude: 1.3236, longitude: 103.9273 },
+    },
+    {
+      displayName: { text: "MR K Prata" },
+      location: { latitude: 1.3117, longitude: 103.8616 },
+    },
+  ];
+
+  const result = formatPlaces(places, ctHub2, 800);
+  assert.deepEqual(
+    result.map((p) => p.name),
+    ["MR K Prata", "Lavender Food Square"],
+  );
+  assert.equal(result[0].rating, null);
 });
 
 test("haversineMetres measures CT Hub 2 to Lavender MRT at under 600 m", () => {

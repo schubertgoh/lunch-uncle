@@ -102,13 +102,15 @@ export async function executeTool(name, args, env) {
 async function findLunchPlaces({ query, open_now = false }, env) {
   const centre = CT_HUB_2;
 
+  // locationBias only nudges results, so far-away matches still come back.
+  // Text Search restricts by rectangle only, so use the box around the circle.
   const body = {
     textQuery: query,
     includedType: "restaurant",
     openNow: open_now,
     pageSize: MAX_PLACES,
-    locationBias: {
-      circle: { center: centre, radius: SEARCH_RADIUS_METRES },
+    locationRestriction: {
+      rectangle: boundingBox(centre, SEARCH_RADIUS_METRES),
     },
   };
 
@@ -128,18 +130,36 @@ async function findLunchPlaces({ query, open_now = false }, env) {
   }
 
   const data = await res.json();
-  return { places: formatPlaces(data.places ?? [], centre) };
+  return {
+    places: formatPlaces(data.places ?? [], centre, SEARCH_RADIUS_METRES),
+  };
 }
 
 /**
- * Shape Places API results into the fields Uncle needs.
+ * Shape Places API results into the fields Uncle needs, nearest first,
+ * dropping anything beyond maxMetres (the box corners reach past the circle).
  */
-export function formatPlaces(places, origin) {
-  return places.map(({ displayName, rating, location }) => ({
-    name: displayName?.text ?? "Unnamed",
-    rating: rating ?? null,
-    distance_m: Math.round(haversineMetres(origin, location)),
-  }));
+export function formatPlaces(places, origin, maxMetres = Infinity) {
+  return places
+    .map(({ displayName, rating, location }) => ({
+      name: displayName?.text ?? "Unnamed",
+      rating: rating ?? null,
+      distance_m: Math.round(haversineMetres(origin, location)),
+    }))
+    .filter((place) => place.distance_m <= maxMetres)
+    .sort((a, b) => a.distance_m - b.distance_m);
+}
+
+/**
+ * Smallest lat/lng rectangle containing a circle, in Places API shape.
+ */
+export function boundingBox(centre, radiusMetres) {
+  const dLat = radiusMetres / 111_320;
+  const dLng = dLat / Math.cos((centre.latitude * Math.PI) / 180);
+  return {
+    low: { latitude: centre.latitude - dLat, longitude: centre.longitude - dLng },
+    high: { latitude: centre.latitude + dLat, longitude: centre.longitude + dLng },
+  };
 }
 
 /**
