@@ -4,6 +4,11 @@ import { toolDefinitions, executeTool } from "./tools.js";
 // OpenCode Go, OpenAI-compatible chat completions endpoint.
 const LLM_BASE_URL = "https://opencode.ai/inference/go/openai/v1";
 const LLM_MODEL = "deepseek-v4.1-flash";
+// DeepSeek on OpenCode Go often returns 429 "Endpoint is unavailable",
+// so retry it once, then fall back to a model that is reliably up.
+const LLM_FALLBACK_MODEL = "glm-5.3-flash";
+const ATTEMPTS_PER_MODEL = 2;
+const RETRY_DELAY_MS = 500;
 
 const LLM_TIMEOUT_MS = 20_000;
 const MAX_ROUNDS = 8;
@@ -56,6 +61,25 @@ export async function runLoop(history, message, env) {
 }
 
 async function callModel(messages, env, sessionId) {
+  let lastError;
+  for (const model of [LLM_MODEL, LLM_FALLBACK_MODEL]) {
+    for (let attempt = 0; attempt < ATTEMPTS_PER_MODEL; attempt++) {
+      if (lastError) {
+        console.warn(`retrying with ${model}: ${lastError.message}`);
+        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+      }
+      try {
+        return await requestCompletion(model, messages, env, sessionId);
+      } catch (err) {
+        if (!err.retryable) throw err;
+        lastError = err;
+      }
+    }
+  }
+  throw lastError;
+}
+
+async function requestCompletion(model, messages, env, sessionId) {
   const res = await fetch(`${LLM_BASE_URL}/chat/completions`, {
     method: "POST",
     headers: {
@@ -64,7 +88,7 @@ async function callModel(messages, env, sessionId) {
       "x-opencode-session": sessionId,
     },
     body: JSON.stringify({
-      model: LLM_MODEL,
+      model,
       messages,
       tools: toolDefinitions,
     }),
@@ -72,7 +96,9 @@ async function callModel(messages, env, sessionId) {
   });
 
   if (!res.ok) {
-    throw new Error(`LLM returned ${res.status}: ${await res.text()}`);
+    const err = new Error(`${model} returned ${res.status}: ${await res.text()}`);
+    err.retryable = res.status === 429 || res.status >= 500;
+    throw err;
   }
 
   const data = await res.json();
