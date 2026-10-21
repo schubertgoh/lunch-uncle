@@ -1,6 +1,8 @@
 import ui from "./ui.html";
 import { runLoop } from "./loop.js";
 
+const MAX_MESSAGE_CHARS = 500;
+
 export default {
   async fetch(request, env) {
     const { pathname } = new URL(request.url);
@@ -30,6 +32,9 @@ async function handleChat(request, env) {
   const { history = [], message } = body;
   if (typeof message !== "string" || message.trim() === "") {
     return json({ error: "message is required" }, 400);
+  }
+  if (message.length > MAX_MESSAGE_CHARS) {
+    return json({ error: "Message too long. Uncle got no time for essays." }, 400);
   }
 
   try {

@@ -13,6 +13,17 @@ const SEARCH_RADIUS_METRES = 800;
 const MAX_PLACES = 10;
 const FORECAST_AREA = "Kallang";
 
+// Places you can sit down or buy a meal at. Food courts and kopitiams are
+// typed food_court or coffee_shop, not restaurant, so list them explicitly.
+const EATING_TYPES = new Set([
+  "restaurant",
+  "food_court",
+  "coffee_shop",
+  "cafe",
+  "meal_takeaway",
+  "bakery",
+]);
+
 const PLACES_URL = "https://places.googleapis.com/v1/places:searchText";
 const FORECAST_URL =
   "https://api-open.data.gov.sg/v2/real-time/api/two-hr-forecast";
@@ -83,15 +94,22 @@ export const toolDefinitions = [
  * Run one tool call requested by the model and return the result as a string.
  */
 export async function executeTool(name, args, env) {
-  switch (name) {
-    case "find_lunch_places":
-      return JSON.stringify(await findLunchPlaces(args, env));
-    case "get_rain_forecast":
-      return JSON.stringify(await getRainForecast());
-    case "get_bus_arrivals":
-      return JSON.stringify(await getBusArrivals(args));
-    default:
-      return JSON.stringify({ error: `Unknown tool: ${name}` });
+  // A failed lookup goes back to the model as an error result, so one
+  // flaky API does not sink the whole reply.
+  try {
+    switch (name) {
+      case "find_lunch_places":
+        return JSON.stringify(await findLunchPlaces(args, env));
+      case "get_rain_forecast":
+        return JSON.stringify(await getRainForecast());
+      case "get_bus_arrivals":
+        return JSON.stringify(await getBusArrivals(args));
+      default:
+        return JSON.stringify({ error: `Unknown tool: ${name}` });
+    }
+  } catch (err) {
+    console.error(`tool ${name} failed:`, err);
+    return JSON.stringify({ error: `${name} is not working right now` });
   }
 }
 
@@ -106,7 +124,6 @@ async function findLunchPlaces({ query, open_now = false }, env) {
   // Text Search restricts by rectangle only, so use the box around the circle.
   const body = {
     textQuery: query,
-    includedType: "restaurant",
     openNow: open_now,
     pageSize: MAX_PLACES,
     locationRestriction: {
@@ -120,7 +137,7 @@ async function findLunchPlaces({ query, open_now = false }, env) {
       "content-type": "application/json",
       "X-Goog-Api-Key": env.GOOGLE_PLACES_API_KEY,
       "X-Goog-FieldMask":
-        "places.id,places.displayName,places.location,places.rating,places.currentOpeningHours",
+        "places.id,places.displayName,places.location,places.rating,places.types,places.currentOpeningHours.openNow",
     },
     body: JSON.stringify(body),
   });
@@ -136,15 +153,18 @@ async function findLunchPlaces({ query, open_now = false }, env) {
 }
 
 /**
- * Shape Places API results into the fields Uncle needs, nearest first,
- * dropping anything beyond maxMetres (the box corners reach past the circle).
+ * Shape Places API results into the fields Uncle needs, nearest first.
+ * Drops places that are not somewhere to eat (malls, supermarkets) and
+ * anything beyond maxMetres (the box corners reach past the circle).
  */
 export function formatPlaces(places, origin, maxMetres = Infinity) {
   return places
-    .map(({ displayName, rating, location }) => ({
+    .filter(({ types = [] }) => types.some((t) => EATING_TYPES.has(t)))
+    .map(({ displayName, rating, location, currentOpeningHours }) => ({
       name: displayName?.text ?? "Unnamed",
       rating: rating ?? null,
       distance_m: Math.round(haversineMetres(origin, location)),
+      open_now: currentOpeningHours?.openNow ?? null,
     }))
     .filter((place) => place.distance_m <= maxMetres)
     .sort((a, b) => a.distance_m - b.distance_m);
@@ -211,6 +231,9 @@ export function formatForecast(payload, area) {
 // ---------------------------------------------------------------------------
 
 async function getBusArrivals({ stop_code }) {
+  if (!/^\d{5}$/.test(stop_code ?? "")) {
+    return { error: "Bus stop code must be five digits" };
+  }
   const url = `${BUS_URL}?id=${encodeURIComponent(stop_code)}`;
   const res = await fetch(url);
   if (!res.ok) {
@@ -223,6 +246,10 @@ async function getBusArrivals({ stop_code }) {
  * Reduce an arrivelah response to service numbers and minutes to arrival.
  */
 export function formatBusArrivals(payload, stopCode) {
+  // arrivelah reports an unknown stop as a 200 with an error field.
+  if (payload?.error) {
+    return { stop_code: stopCode, error: payload.error };
+  }
   const services = payload?.services ?? [];
   return {
     stop_code: stopCode,

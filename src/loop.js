@@ -12,6 +12,7 @@ const RETRY_DELAY_MS = 500;
 
 const LLM_TIMEOUT_MS = 20_000;
 const MAX_ROUNDS = 8;
+const MAX_HISTORY_MESSAGES = 20;
 
 const FALLBACK_REPLY = "Just go Berseh Food Centre lah.";
 
@@ -28,7 +29,7 @@ export async function runLoop(history, message, env) {
 
   const messages = [
     { role: "system", content: buildSystemPrompt() },
-    ...history,
+    ...cleanHistory(history),
     { role: "user", content: message },
   ];
 
@@ -71,8 +72,12 @@ async function callModel(messages, env, sessionId) {
       try {
         return await requestCompletion(model, messages, env, sessionId);
       } catch (err) {
-        if (!err.retryable) throw err;
+        // A timeout already cost LLM_TIMEOUT_MS, so skip straight to the
+        // next model instead of waiting on this one again.
+        const timedOut = err.name === "TimeoutError";
+        if (!err.retryable && !timedOut) throw err;
         lastError = err;
+        if (timedOut) break;
       }
     }
   }
@@ -103,6 +108,22 @@ async function requestCompletion(model, messages, env, sessionId) {
 
   const data = await res.json();
   return data.choices[0].message;
+}
+
+/**
+ * Keep only recent user/assistant text turns from client-supplied history,
+ * so a caller cannot inject system or tool messages or send a huge payload.
+ */
+export function cleanHistory(history) {
+  if (!Array.isArray(history)) return [];
+  return history
+    .filter(
+      (m) =>
+        (m?.role === "user" || m?.role === "assistant") &&
+        typeof m.content === "string",
+    )
+    .slice(-MAX_HISTORY_MESSAGES)
+    .map(({ role, content }) => ({ role, content }));
 }
 
 function parseArgs(raw) {

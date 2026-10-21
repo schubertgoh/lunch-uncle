@@ -19,8 +19,14 @@ How you work:
 /**
  * Build the system prompt for one request.
  */
-export function buildSystemPrompt() {
-  const requestId = crypto.randomUUID();
-  const now = new Date().toISOString();
-  return `Request ${requestId} at ${now}. ${PERSONA}`;
+export function buildSystemPrompt(now = new Date()) {
+  // The fixed persona goes first so the prompt prefix stays cacheable;
+  // the time goes last, in Singapore time, since that is what lunch runs on.
+  const sgTime = now.toLocaleString("en-SG", {
+    timeZone: "Asia/Singapore",
+    weekday: "long",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return `${PERSONA}\n\nIt is now ${sgTime} in Singapore.`;
 }
